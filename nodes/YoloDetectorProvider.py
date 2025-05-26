@@ -18,10 +18,59 @@ class NoSegmDetector:
 
 
 def load_yolo_model(model_path):
-    """Load YOLO model using ultralytics"""
+    """Load YOLO model using ultralytics with PyTorch 2.6 compatibility"""
     try:
+        import torch
         from ultralytics import YOLO
-        return YOLO(model_path)
+        
+        # Handle PyTorch 2.6+ weights_only security restrictions
+        try:
+            # Try to add safe globals for ultralytics models
+            if hasattr(torch.serialization, 'add_safe_globals'):
+                import ultralytics.nn.tasks
+                torch.serialization.add_safe_globals([
+                    ultralytics.nn.tasks.SegmentationModel,
+                    ultralytics.nn.tasks.DetectionModel,
+                    ultralytics.nn.tasks.ClassificationModel,
+                    ultralytics.nn.tasks.PoseModel,
+                    ultralytics.nn.tasks.OBBModel
+                ])
+        except (AttributeError, ImportError):
+            # Fallback for older PyTorch versions or if modules don't exist
+            pass
+        
+        # Try loading with safe_globals context manager if available
+        try:
+            if hasattr(torch.serialization, 'safe_globals'):
+                import ultralytics.nn.tasks
+                with torch.serialization.safe_globals([
+                    ultralytics.nn.tasks.SegmentationModel,
+                    ultralytics.nn.tasks.DetectionModel,
+                    ultralytics.nn.tasks.ClassificationModel,
+                    ultralytics.nn.tasks.PoseModel,
+                    ultralytics.nn.tasks.OBBModel
+                ]):
+                    return YOLO(model_path)
+            else:
+                return YOLO(model_path)
+        except Exception as e:
+            # If safe loading fails, try with the legacy approach
+            # This is less secure but may be necessary for some models
+            logging.warning(f"Safe loading failed, attempting legacy load: {e}")
+            
+            # Temporarily patch torch.load to use weights_only=False
+            original_load = torch.load
+            def patched_load(*args, **kwargs):
+                if 'weights_only' not in kwargs:
+                    kwargs['weights_only'] = False
+                return original_load(*args, **kwargs)
+            
+            try:
+                torch.load = patched_load
+                return YOLO(model_path)
+            finally:
+                torch.load = original_load
+                
     except ImportError:
         raise ImportError("ultralytics package is required. Install with: pip install ultralytics")
 
