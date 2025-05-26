@@ -49,7 +49,9 @@ namespace SDetailerExtension
 
         public override void OnPreInit()
         {
-            // No changes needed here based on the new info
+            string nodeFolder = Path.Join(FilePath, "nodes");
+            ComfyUISelfStartBackend.CustomNodePaths.Add(nodeFolder);
+            Logs.Init($"Adding {nodeFolder} to CustomNodePaths");
         }
 
         public override void OnInit()
@@ -169,7 +171,12 @@ namespace SDetailerExtension
 
             WorkflowGenerator.AddStep(g =>
             {
-                if (!g.Features.Contains("comfyui") || !g.UserInput.Get(Group.Toggled, false))
+                if (!g.Features.Contains("comfyui"))
+                {
+                    return;
+                }
+
+                if (!g.UserInput.TryGet(DetectionModel, out _))
                 {
                     return;
                 }
