@@ -4,179 +4,204 @@ using SwarmUI.Text2Image;
 using SwarmUI.Builtin_ComfyUIBackend;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
-using System.IO;
+using System.IO; // Keep for FilePath if OnPreInit were to be used for other reasons
 using System;
 using System.Linq;
-using SwarmUI.Accounts;
-using FreneticUtilities.FreneticExtensions;
-using SwarmUI.WebAPI;
+using SwarmUI.Accounts; // Keep if GetValues uses session
+using FreneticUtilities.FreneticExtensions; // Keep for general utilities like TryGet
 
-namespace SDetailerExtension
+// Note: No longer importing SDetailer-specific node files as they are removed.
+
+namespace SDetailerExtension // Namespace can remain or be changed if you prefer
 {
-    public class SDetailerExtension : Extension
+    public class MaskDetailerExtension : Extension
     {
-        public static T2IParamGroup Group = new("sDetailer", Toggles: true, Open: false, OrderPriority: -2);
-        public static T2IRegisteredParam<string> DetectionModel;
-        public static T2IRegisteredParam<float> ConfidenceThreshold;
-        public static T2IRegisteredParam<string> MaskFilterMethod;
-        public static T2IRegisteredParam<string> ClassFilter;
-        public static T2IRegisteredParam<int> MaskTopK;
-        public static T2IRegisteredParam<float> MinRatio;
-        public static T2IRegisteredParam<float> MaxRatio;
-        public static T2IRegisteredParam<int> DilateErode;
-        public static T2IRegisteredParam<int> XOffset;
-        public static T2IRegisteredParam<int> YOffset;
-        public static T2IRegisteredParam<string> MaskMergeInvert;
-        public static T2IRegisteredParam<int> MaskBlur;
-        public static T2IRegisteredParam<float> DenoisingStrength;
-        public static T2IRegisteredParam<string> Prompt;
-        public static T2IRegisteredParam<string> NegativePrompt;
-        public static T2IRegisteredParam<int> Steps;
-        public static T2IRegisteredParam<float> CFGScale;
-        public static T2IRegisteredParam<T2IModel> Checkpoint;
-        public static T2IRegisteredParam<T2IModel> VAE;
-        public static T2IRegisteredParam<string> Sampler;
-        public static T2IRegisteredParam<long> Seed;
-        public static T2IRegisteredParam<string> Scheduler;
-        public static T2IRegisteredParam<string> SkipIndices;
+        // New group for MaskDetailer parameters
+        public static T2IParamGroup MaskDetailerGroup = new("MaskDetailer", "MaskDetailer Workflow Options", Toggles: true, Open: false, OrderPriority: -1); // Or any other priority
 
-        private static JToken GetModelPath(T2IModel model, JToken defaultValue)
-        {
-            if (model == null)
-            {
-                return defaultValue;
-            }
-            return model.ToString();
-        }
+        // Parameters for UltralyticsDetectorProvider
+        public static T2IRegisteredParam<string> MD_DetectionModel;
 
+        // Parameters for SegmDetectorCombined_v2
+        public static T2IRegisteredParam<float> MD_ConfidenceThreshold;
+        public static T2IRegisteredParam<int> MD_MaskDilation;
+
+        // Parameters for MaskDetailerPipe
+        public static T2IRegisteredParam<float> MD_GuideSize;
+        public static T2IRegisteredParam<float> MD_MaxSize;
+        public static T2IRegisteredParam<int> MD_Steps; // Override
+        public static T2IRegisteredParam<float> MD_CFGScale; // Override
+        public static T2IRegisteredParam<string> MD_Sampler; // Override
+        public static T2IRegisteredParam<string> MD_Scheduler; // Override
+        public static T2IRegisteredParam<long> MD_Seed; // Override
+        public static T2IRegisteredParam<float> MD_Denoise;
+        public static T2IRegisteredParam<float> MD_CropFactor;
+        public static T2IRegisteredParam<int> MD_DropSize;
+        // public static T2IRegisteredParam<T2IModel> MD_Checkpoint; // Removed, basic_pipe handles this
+        // public static T2IRegisteredParam<T2IModel> MD_VAE; // Removed, basic_pipe handles this
+        // public static T2IRegisteredParam<string> MD_Prompt; // Removed, basic_pipe handles this
+        // public static T2IRegisteredParam<string> MD_NegativePrompt; // Removed, basic_pipe handles this
+
+
+        // OnPreInit is removed as we are no longer adding custom node paths for sDetailer's python nodes.
+        // If this extension had other reasons to use OnPreInit (like loading other resources), it could be kept.
+        // For now, assuming Impact Pack nodes are globally available to ComfyUI.
+        /*
         public override void OnPreInit()
         {
-            string nodeFolder = Path.Join(FilePath, "nodes");
-            ComfyUISelfStartBackend.CustomNodePaths.Add(nodeFolder);
-            Logs.Init($"Adding {nodeFolder} to CustomNodePaths");
+            // string nodeFolder = Path.Join(FilePath, "nodes"); // This was for sDetailer's python nodes
+            // ComfyUISelfStartBackend.CustomNodePaths.Add(nodeFolder);
+            // Logs.Init($"Adding {nodeFolder} to CustomNodePaths");
         }
+        */
 
         public override void OnInit()
         {
-            ComfyUIBackendExtension.NodeToFeatureMap["SDetailerDetect"] = "comfyui";
-            ComfyUIBackendExtension.NodeToFeatureMap["SDetailerInpaintHelper"] = "comfyui";
-            DetectionModel = T2IParamTypes.Register<string>(new("SD Detection Model", "Select detection model for inpainting. Models go in 'SwarmUI/Models/yolov8'.",
-                "(None)",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_detection_model", OrderPriority: 10,
-                GetValues: (_) => {
-                    var models = ComfyUIBackendExtension.YoloModels?.ToList();
-                    if (models == null || models.Count == 0) {
-                        return ["(None)"];
-                    }
-                    return models;
+            // Remove old NodeToFeatureMap entries for SDetailerDetect and SDetailerInpaintHelper
+            // ComfyUIBackendExtension.NodeToFeatureMap.Remove("SDetailerDetect");
+            // ComfyUIBackendExtension.NodeToFeatureMap.Remove("SDetailerInpaintHelper");
+            // The new nodes (ToBasicPipe, etc.) are assumed to be part of a known pack (Impact Pack)
+            // and may not need explicit mapping here if they don't require special feature flags.
+
+            // --- Parameters for UltralyticsDetectorProvider ---
+            MD_DetectionModel = T2IParamTypes.Register<string>(new(
+                "MD Detection Model",
+                "Select detection model for MaskDetailer (e.g., segmentation models like 'segm/model.pt'). Models should be in the appropriate ComfyUI custom node model paths (eg. ComfyUI/models/ultralytics/segm).",
+                "(None)", // Default
+                Toggleable: false, // This being (None) can be the trigger to disable the workflow
+                Group: MaskDetailerGroup,
+                FeatureFlag: "comfyui",
+                ID: "maskdetailer_detection_model",
+                OrderPriority: 10,
+                GetValues: (session) => {
+                    // TODO: Implement robust logic to list available segmentation models
+                    // This might involve a new API call to your backend or a predefined list.
+                    // The ComfyUI API endpoint /object_info can list nodes, and then you could parse UltralyticsDetectorProvider
+                    // for its model widget options if it's a combo. Or, scan specific model directories.
+                    // For now, using a placeholder list based on previous examples.
+                    var exampleModels = new List<string> { "(None)", "segm/99coins_anime_girl_face_m_seg.pt", "segm/bbox/face_yolov8m.pt" };
+                    // Potentially fetch from backend:
+                    // var models = ComfyUIBackendExtension.GetModels("ultralytics/segm") ?? exampleModels;
+                    // return models.Count > 0 ? models : exampleModels;
+                    return exampleModels;
                 }
             ));
 
-            ClassFilter = T2IParamTypes.Register<string>(new("SD Class Filter", "Comma-separated list of class names or IDs to include (e.g., 'person, car, 3'). Leave empty to include all classes.", "",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_class_filter", OrderPriority: 25));
+            // --- Parameters for SegmDetectorCombined_v2 ---
+            MD_ConfidenceThreshold = T2IParamTypes.Register<float>(new(
+                "MD Confidence Threshold",
+                "Minimum detection score (0-1) for SegmDetector. Lower = more detections.",
+                0.3f, // Default from SegmDetectorCombined_v2 in JSON was 0.3
+                Min: 0.0f, Max: 1.0f, Step: 0.01f, // Finer step
+                Toggleable: false,
+                Group: MaskDetailerGroup,
+                FeatureFlag: "comfyui",
+                ID: "maskdetailer_confidence_threshold",
+                OrderPriority: 20
+            ));
 
-            MaskFilterMethod = T2IParamTypes.Register<string>(new("SD Filter Method", "Prioritize multiple masks by 'area' (larger first) or 'confidence' (higher score first).", "area",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_filter_method", OrderPriority: 30,
-                GetValues: (_) => new List<string> { "area", "confidence" }));
+            MD_MaskDilation = T2IParamTypes.Register<int>(new(
+                "MD Mask Dilation",
+                "Dilation pixels for SegmDetector. Positive values expand the mask. 0 for no change.",
+                0, // Default from SegmDetectorCombined_v2 in JSON was 0
+                Min: 0, Max: 128, Step: 1, // Adjusted range
+                Toggleable: false,
+                Group: MaskDetailerGroup,
+                FeatureFlag: "comfyui",
+                ID: "maskdetailer_mask_dilation",
+                OrderPriority: 30
+            ));
 
-            MaskTopK = T2IParamTypes.Register<int>(new("SD Mask TopK", "Max masks to inpaint, based on 'SD Filter Method'. 0 = process all.", "0",
-                Min: 0, Max: 100, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_mask_topk", OrderPriority: 40));
+            // --- Parameters for MaskDetailerPipe ---
+            MD_GuideSize = T2IParamTypes.Register<float>(new(
+                "MD Guide Size",
+                "Target size for the detailer to operate on (pixels).",
+                512f, Min: 64f, Max: 16384f, Step: 64f, // nodes.MAX_RESOLUTION equivalent, common step
+                Toggleable: false, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_guide_size", OrderPriority: 40
+            ));
 
-            MinRatio = T2IParamTypes.Register<float>(new("SD Min Area Ratio", "Ignore masks smaller than this fraction of image area (e.g., 0.1 for 10%).", "0.0",
-                Min: 0.0f, Max: 1.0f, Step: 0.1f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_min_ratio", OrderPriority: 50));
- 
-            MaxRatio = T2IParamTypes.Register<float>(new("SD Max Area Ratio", "Ignore masks larger than this fraction of image area (e.g., 0.9 for 90%).", "1.0",
-                Min: 0.0f, Max: 1.0f, Step: 0.1f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_max_ratio", OrderPriority: 60));
- 
-            SkipIndices = T2IParamTypes.Register<string>(new("SD Skip Indices", "Comma-separated mask indices (1-based) to skip after sorting (e.g., '1,3').", "",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_skip_indices", OrderPriority: 65));
- 
-            XOffset = T2IParamTypes.Register<int>(new("SD X Offset", "Shift mask horizontally (pixels). Positive = right, negative = left.", "0",
-                Min: -200, Max: 200, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_x_offset", OrderPriority: 70));
- 
-            YOffset = T2IParamTypes.Register<int>(new("SD Y Offset", "Shift mask vertically (pixels). Positive = down, negative = up.", "0",
-                Min: -200, Max: 200, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_y_offset", OrderPriority: 80));
- 
-            DilateErode = T2IParamTypes.Register<int>(new("SD Dilate/Erode", "Expand (positive) or shrink (negative) mask area in pixels. 0 = no change.", "4",
-                Min: -128, Max: 128, Step: 4, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_dilate_erode", OrderPriority: 90));
+            MD_MaxSize = T2IParamTypes.Register<float>(new(
+                "MD Max Size",
+                "Maximum size constraint for the detailing process (pixels).",
+                1024f, Min: 64f, Max: 16384f, Step: 64f, // nodes.MAX_RESOLUTION equivalent
+                Toggleable: false, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_max_size", OrderPriority: 50
+            ));
 
-            MaskMergeInvert = T2IParamTypes.Register<string>(new("SD Mask Merge Mode", "Handle multiple masks: 'none' (separate), 'merge' (combine), 'merge_invert' (combine & invert).", "none",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_mask_merge_invert", OrderPriority: 100,
-                GetValues: (_) => new List<string> { "none", "merge", "merge_invert" }));
+            MD_Steps = T2IParamTypes.Register<int>(new(
+                "MD Steps (Override)",
+                "Override sampling steps for MaskDetailer. Uses main steps if not enabled.",
+                20, Min: 1, Max: 10000, // Default, Min, Max from MaskDetailerPipe INPUT_TYPES
+                Toggleable: true, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_steps", OrderPriority: 60
+            ));
 
-            MaskBlur = T2IParamTypes.Register<int>(new("SD Mask Blur", "Blur mask edge (pixels) for smoother transitions. 0 = sharp edge.", "4",
-                Min: 0, Max: 64, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_mask_blur_amount", OrderPriority: 110));
+            MD_CFGScale = T2IParamTypes.Register<float>(new(
+                "MD CFG Scale (Override)",
+                "Override CFG Scale for MaskDetailer. Uses main CFG if not enabled.",
+                8.0f, Min: 0.0f, Max: 100.0f, Step: 0.1f, // Default, Min, Max from MaskDetailerPipe INPUT_TYPES, finer step
+                Toggleable: true, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_cfg_scale", OrderPriority: 70
+            ));
 
-            DenoisingStrength = T2IParamTypes.Register<float>(new("SD Denoising Strength", "How much original image is changed in mask (0 = none, 1 = full replace).", "0.4",
-                Min: 0.0f, Max: 1.0f, Step: 0.05f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_denoising_strength", OrderPriority: 112));
-
-            ConfidenceThreshold = T2IParamTypes.Register<float>(new("SD Confidence Threshold", "Min detection score (0-1) to consider an object found. Lower = more detections.", "0.3",
-                Min: 0.05f, Max: 1.0f, Step: 0.05f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_confidence_threshold", OrderPriority: 115));
-
-            Prompt = T2IParamTypes.Register<string>(new("SD Prompt", "Positive prompt for inpainting. Uses main prompt if empty.",
-                "", Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_prompt", OrderPriority: 120, ViewType: ParamViewType.PROMPT));
-
-            NegativePrompt = T2IParamTypes.Register<string>(new("SD Negative Prompt", "Negative prompt for inpainting. Uses main prompt if empty.",
-                "", Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_negative_prompt", OrderPriority: 130, ViewType: ParamViewType.PROMPT));
-
-            Seed = T2IParamTypes.Register<long>(new("SD Seed", "Inpainting seed. -1 for noise consistent with main image seed, 0 for a new random seed for each inpaint, or specify a fixed seed.",
-                "-1", Min: -1, Max: long.MaxValue, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_seed", OrderPriority: 150));
-
-            Checkpoint = T2IParamTypes.Register<T2IModel>(new("SD Checkpoint", "Override Checkpoint: Use a different base model for inpainting.",
-                null, Toggleable: true, Group: Group, FeatureFlag: "comfyui",
-                Subtype: "Stable-Diffusion", ChangeWeight: 9, ID: "sdetailer_checkpoint", OrderPriority: 160,
-                GetValues: (session) => {
-                    var models = Program.T2IModelSets["Stable-Diffusion"].ListModelNamesFor(session);
-                    return models.Where(m => m != "(None)" && m != null)
-                                 .Select(m => T2IParamTypes.CleanModelName(m))
-                                 .Distinct()
-                                 .ToList();
-                }));
-
-            VAE = T2IParamTypes.Register<T2IModel>(new("SD VAE", "Override VAE: Use a different VAE for inpainting. 'Automatic' uses default.",
-                null, Toggleable: true, Group: Group,
-                FeatureFlag: "comfyui", Subtype: "VAE", ChangeWeight: 7, ID: "sdetailer_vae", OrderPriority: 170,
-                GetValues: (session) => {
-                    var models = Program.T2IModelSets["VAE"].ListModelNamesFor(session);
-                    return models.Where(m => m != "(None)" && m != null)
-                                 .Select(m => T2IParamTypes.CleanModelName(m))
-                                 .Distinct()
-                                 .ToList();
-                }));
-
-            Sampler = T2IParamTypes.Register<string>(new("SD Sampler", "Override Sampler: Use a different sampler for inpainting.",
-                null,
-                Toggleable: true, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_sampler", OrderPriority: 180,
+            MD_Sampler = T2IParamTypes.Register<string>(new(
+                "MD Sampler (Override)",
+                "Override sampler for MaskDetailer. Uses main sampler if not enabled.",
+                null, // Will use default from MaskDetailerPipe or main if not set
+                Toggleable: true, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_sampler", OrderPriority: 80,
                 GetValues: (session) => {
                     T2IParamType samplerType = ComfyUIBackendExtension.SamplerParam?.Type;
-                    if (samplerType?.GetValues != null) {
-                        try {
-                            return samplerType.GetValues(session);
-                        }
-                        catch { }
-                    }
-                    return [];
-                }));
+                    if (samplerType?.GetValues != null) { try { return samplerType.GetValues(session); } catch { } }
+                    return new List<string>(ComfyUIBackendExtension.SamplersDefault); // Fallback
+                }
+            ));
 
-            Scheduler = T2IParamTypes.Register<string>(new("SD Scheduler", "Override Scheduler: Use a different scheduler specifically for the inpainting step.",
-                null,
-                Toggleable: true, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_scheduler", OrderPriority: 185,
+            MD_Scheduler = T2IParamTypes.Register<string>(new(
+                "MD Scheduler (Override)",
+                "Override scheduler for MaskDetailer. Uses main scheduler if not enabled.",
+                null, // Will use default from MaskDetailerPipe or main if not set
+                Toggleable: true, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_scheduler", OrderPriority: 90,
                 GetValues: (session) => {
                     T2IParamType schedulerType = ComfyUIBackendExtension.SchedulerParam?.Type;
-                    if (schedulerType?.GetValues != null) {
-                        try {
-                            return schedulerType.GetValues(session);
-                        }
-                        catch { }
-                    }
-                    return [];
-                }));
+                    if (schedulerType?.GetValues != null) { try { return schedulerType.GetValues(session); } catch { } }
+                    return new List<string>(ComfyUIBackendExtension.SchedulersDefault); // Fallback
+                }
+            ));
+            
+            MD_Seed = T2IParamTypes.Register<long>(new(
+                "MD Seed (Override)",
+                "MaskDetailer seed. Uses main image seed if not enabled. Set to 0 for MaskDetailer's internal random.",
+                0, Min: -1, Max: long.MaxValue, // -1 could mean use main seed, 0 for MaskDetailerPipe default (random each time)
+                Toggleable: true, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_seed", OrderPriority: 100
+            ));
 
-            Steps = T2IParamTypes.Register<int>(new("SD Steps", "Override Steps: Use different sampling steps for inpainting.", "28",
-                Min: 1, Max: 150, Step: 1, Toggleable: true, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_steps", OrderPriority: 190));
+            MD_Denoise = T2IParamTypes.Register<float>(new(
+                "MD Denoise Strength",
+                "Denoising strength for the MaskDetailer process (0 = none, 1 = full replace).",
+                0.5f, Min: 0.0f, Max: 1.0f, Step: 0.01f, // From MaskDetailerPipe INPUT_TYPES
+                Toggleable: false, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_denoise", OrderPriority: 110
+            ));
 
-            CFGScale = T2IParamTypes.Register<float>(new("SD CFG Scale", "Override CFG Scale: Use different prompt guidance for inpainting.", "7.0",
-                Min: 0.0f, Max: 30.0f, Step: 0.5f, Toggleable: true, Group: Group, FeatureFlag: "comfyui", ID: "sdetailer_cfg_scale", OrderPriority: 200));
+            MD_CropFactor = T2IParamTypes.Register<float>(new(
+                "MD Crop Factor",
+                "Factor to expand the bounding box for cropping before detailing (1.0 = no expansion).",
+                3.0f, Min: 1.0f, Max: 10f, Step: 0.1f, // From MaskDetailerPipe INPUT_TYPES
+                Toggleable: false, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_crop_factor", OrderPriority: 120
+            ));
+
+            MD_DropSize = T2IParamTypes.Register<int>(new(
+                "MD Drop Size",
+                "Ignore masks smaller than this size (pixels) for detailing.",
+                10, Min: 1, Max: 16384, Step: 1, // Max needs to align with MAX_RESOLUTION logic
+                Toggleable: false, Group: MaskDetailerGroup, FeatureFlag: "comfyui",
+                ID: "maskdetailer_drop_size", OrderPriority: 130
+            ));
 
             WorkflowGenerator.AddStep(g =>
             {
@@ -185,101 +210,118 @@ namespace SDetailerExtension
                     return;
                 }
 
-                if (!g.UserInput.TryGet(DetectionModel, out _))
+                // Activation check for MaskDetailer
+                if (!g.UserInput.TryGet(MD_DetectionModel, out string detectionModelName) || string.IsNullOrEmpty(detectionModelName) || detectionModelName == "(None)")
                 {
-                    return;
+                    return; // MaskDetailer not active
                 }
 
-                string detectionModel = g.UserInput.Get(DetectionModel);
-                if (string.IsNullOrEmpty(detectionModel) || detectionModel == "(None)")
-                {
-                    return;
-                }
+                // --- Get Parameter Values ---
+                // UltralyticsDetectorProvider
+                string mdModel = g.UserInput.Get(MD_DetectionModel);
 
-                float confidenceThreshold = g.UserInput.Get(ConfidenceThreshold, 0.3f);
-                string maskFilterMethod = g.UserInput.Get(MaskFilterMethod, "area");
-                int maskTopK = g.UserInput.Get(MaskTopK, 0);
-                float minRatio = g.UserInput.Get(MinRatio, 0.0f);
-                float maxRatio = g.UserInput.Get(MaxRatio, 1.0f);
-                int xOffset = g.UserInput.Get(XOffset, 0);
-                int yOffset = g.UserInput.Get(YOffset, 0);
-                int dilateErode = g.UserInput.Get(DilateErode, 4);
-                string maskMergeInvert = g.UserInput.Get(MaskMergeInvert, "none");
-                int maskBlur = g.UserInput.Get(MaskBlur, 4);
-                float denoisingStrength = g.UserInput.Get(DenoisingStrength, 0.4f);
-                string promptText = g.UserInput.Get(Prompt, "");
-                string negativePromptText = g.UserInput.Get(NegativePrompt, "");
-                int steps = g.UserInput.TryGet(Steps, out int stepsVal) ? stepsVal : g.UserInput.Get(T2IParamTypes.Steps);
-                float cfg = g.UserInput.TryGet(CFGScale, out float cfgVal) ? cfgVal : (float)g.UserInput.Get(T2IParamTypes.CFGScale);
-                string sortOrder = maskFilterMethod == "area" ? "largest-smallest" : "left-right";
+                // SegmDetectorCombined_v2
+                float mdConfidence = g.UserInput.Get(MD_ConfidenceThreshold);
+                int mdDilation = g.UserInput.Get(MD_MaskDilation);
 
-                JArray modelInput = g.FinalModel;
+                // MaskDetailerPipe
+                float mdGuideSize = g.UserInput.Get(MD_GuideSize);
+                float mdMaxSize = g.UserInput.Get(MD_MaxSize);
+                float mdDenoiseStrength = g.UserInput.Get(MD_Denoise);
+                float mdCropFactor = g.UserInput.Get(MD_CropFactor);
+                int mdDropSize = g.UserInput.Get(MD_DropSize);
+
+                // Handle overrides, falling back to main graph values or node defaults
+                long baseSeed = g.UserInput.Get(T2IParamTypes.Seed);
+                long actualMdSeed = g.UserInput.TryGet(MD_Seed, out long seedVal) ? (seedVal == -1 ? baseSeed : seedVal) : baseSeed; // If MD_Seed is -1, use main seed, else use MD_Seed value, else default to main seed.
+
+                int actualMdSteps = g.UserInput.TryGet(MD_Steps, out int stepsVal) ? stepsVal : g.UserInput.Get(T2IParamTypes.Steps);
+                float actualMdCfg = g.UserInput.TryGet(MD_CFGScale, out float cfgVal) ? cfgVal : (float)g.UserInput.Get(T2IParamTypes.CFGScale);
+                
+                string mainSampler = g.UserInput.Get(ComfyUIBackendExtension.SamplerParam);
+                string actualMdSampler = g.UserInput.TryGet(MD_Sampler, out string samplerVal) && !string.IsNullOrEmpty(samplerVal) ? samplerVal : mainSampler;
+                // MaskDetailerPipe's default sampler is "euler", so if mainSampler is also null/empty, this might need a hard default.
+                if (string.IsNullOrEmpty(actualMdSampler)) actualMdSampler = "euler";
+
+
+                string mainScheduler = g.UserInput.Get(ComfyUIBackendExtension.SchedulerParam);
+                string actualMdScheduler = g.UserInput.TryGet(MD_Scheduler, out string schedulerVal) && !string.IsNullOrEmpty(schedulerVal) ? schedulerVal : mainScheduler;
+                // MaskDetailerPipe's default scheduler is "normal".
+                if (string.IsNullOrEmpty(actualMdScheduler)) actualMdScheduler = "normal";
+
+
+                // --- Get Core Workflow Components ---
+                // These are the outputs from the main graph generation before this detailing step.
+                JArray modelInput = g.FinalModel; 
                 JArray clipInput = g.FinalClip;
                 JArray vaeInput = g.FinalVae;
-                string sdLoaderNode = null;
+                JArray positiveCond = g.FinalPrompt; // Conditioning from positive CLIPTextEncode
+                JArray negativeCond = g.FinalNegativePrompt; // Conditioning from negative CLIPTextEncode
+                
+                JArray imageToDetail = g.FinalImageOut; // This should be the IMAGE output of VAEDecode
 
-                if (g.UserInput.TryGet(VAE, out T2IModel vaeModel) && vaeModel != null)
+                // --- Create and Connect Nodes for MaskDetailer Workflow ---
+
+                // 1. ToBasicPipe
+                string basicPipeNode = g.CreateNode("ToBasicPipe", new JObject
                 {
-                    string vaeLoaderNode = g.CreateNode("VAELoader", new JObject { ["vae_name"] = vaeModel.Name });
-                    vaeInput = new JArray { vaeLoaderNode, 0 };
-                }
-
-                if (g.UserInput.TryGet(Checkpoint, out T2IModel sdModel) && sdModel != null)
-                {
-                    sdLoaderNode = g.CreateNode("CheckpointLoaderSimple", new JObject { ["ckpt_name"] = sdModel.Name });
-                    modelInput = new JArray { sdLoaderNode, 0 };
-                    clipInput = new JArray { sdLoaderNode, 1 };
-                }
-
-                JArray lastNode = g.FinalImageOut;
-
-                string detectNode = g.CreateNode("SDetailerDetect", new JObject()
-                {
-                    ["image"] = lastNode,
-                    ["detection_model"] = detectionModel,
-                    ["confidence_threshold"] = confidenceThreshold,
-                    ["class_filter"] = g.UserInput.Get(ClassFilter, ""),
-                    ["kernel_size"] = dilateErode,
-                    ["x_offset"] = xOffset,
-                    ["y_offset"] = yOffset,
-                    ["mask_merge_mode"] = maskMergeInvert,
-                    ["max_detections"] = maskTopK,
-                    ["min_ratio"] = minRatio,
-                    ["max_ratio"] = maxRatio,
-                    ["sort_order"] = sortOrder,
-                    ["skip_indices"] = g.UserInput.Get(SkipIndices, "")
-                });
-
-                string defaultSampler = g.UserInput.Get(ComfyUIBackendExtension.SamplerParam, "euler");
-                string defaultScheduler = g.UserInput.Get(ComfyUIBackendExtension.SchedulerParam, "normal");
-
-                string finalSampler = g.UserInput.TryGet(Sampler, out string samplerVal) && samplerVal != null ? samplerVal : defaultSampler;
-                string finalScheduler = g.UserInput.TryGet(Scheduler, out string schedulerVal) && schedulerVal != null ? schedulerVal : defaultScheduler;
-
-                JArray positiveCond = promptText == "" ? g.FinalPrompt : g.CreateConditioning(promptText, g.FinalClip, g.FinalLoadedModel, true);
-                JArray negativeCond = negativePromptText == "" ? g.FinalNegativePrompt : g.CreateConditioning(negativePromptText, g.FinalClip, g.FinalLoadedModel, false);
-
-                string inpaintNode = g.CreateNode("SDetailerInpaintHelper", new JObject()
-                {
-                    ["image"] = lastNode,
-                    ["mask"] = new JArray { detectNode, 1 },
                     ["model"] = modelInput,
                     ["clip"] = clipInput,
                     ["vae"] = vaeInput,
                     ["positive"] = positiveCond,
-                    ["negative"] = negativeCond,
-                    ["strength"] = denoisingStrength,
-                    ["guidance_scale"] = cfg,
-                    ["steps"] = steps,
-                    ["scheduler"] = finalScheduler,
-                    ["sampler_name"] = finalSampler,
-                    ["seed"] = g.UserInput.Get(Seed, -1L),
-                    ["mask_blur"] = maskBlur,
+                    ["negative"] = negativeCond
                 });
+                JArray basicPipeOutput = new JArray { basicPipeNode, 0 }; // Output slot 0: basic_pipe
 
-                g.FinalImageOut = new JArray { inpaintNode, 0 };
+                // 2. UltralyticsDetectorProvider
+                string detectorProviderNode = g.CreateNode("UltralyticsDetectorProvider", new JObject
+                {
+                    ["model_name"] = mdModel 
+                });
+                JArray segmDetectorInputFromProvider = new JArray { detectorProviderNode, 1 }; // Output slot 1: SEGM_DETECTOR
 
-            }, 9); 
+                // 3. SegmDetectorCombined_v2
+                string segmDetectorNode = g.CreateNode("SegmDetectorCombined_v2", new JObject
+                {
+                    ["segm_detector"] = segmDetectorInputFromProvider,
+                    ["image"] = imageToDetail, 
+                    ["detection_threshold"] = mdConfidence,
+                    ["dilation"] = mdDilation 
+                });
+                JArray maskOutputFromSegmDetector = new JArray { segmDetectorNode, 0 }; // Output slot 0: MASK
+
+                // 4. MaskDetailerPipe
+                string maskDetailerNode = g.CreateNode("MaskDetailerPipe", new JObject
+                {
+                    // Required inputs
+                    ["image"] = imageToDetail,
+                    ["mask"] = maskOutputFromSegmDetector,
+                    ["basic_pipe"] = basicPipeOutput,
+                    ["guide_size"] = mdGuideSize,
+                    ["guide_size_for"] = true, // Default: "mask bbox"
+                    ["max_size"] = mdMaxSize,
+                    ["mask_mode"] = true, // Default: "masked only" (True in JSON means "masked only")
+                    ["seed"] = actualMdSeed,
+                    ["steps"] = actualMdSteps,
+                    ["cfg"] = actualMdCfg,
+                    ["sampler_name"] = actualMdSampler,
+                    ["scheduler"] = actualMdScheduler,
+                    ["denoise"] = mdDenoiseStrength,
+                    ["feather"] = 5, // Default from MaskDetailerPipe INPUT_TYPES
+                    ["crop_factor"] = mdCropFactor,
+                    ["drop_size"] = mdDropSize,
+                    ["refiner_ratio"] = 0.2f, // Default from MaskDetailerPipe INPUT_TYPES
+                    ["batch_size"] = 1, // Default
+                    ["cycle"] = 1, // Default
+                    // Optional inputs that have defaults in MaskDetailerPipe Python
+                    ["inpaint_model"] = false, // Default
+                    ["noise_mask_feather"] = 20, // Default
+                    ["bbox_fill"] = false, // Default
+                    ["contour_fill"] = true // Default
+                });
+                g.FinalImageOut = new JArray { maskDetailerNode, 0 }; // Output slot 0: image
+
+            }, 9); // Execution order priority, adjust if needed relative to other steps
         }
     }
 }
