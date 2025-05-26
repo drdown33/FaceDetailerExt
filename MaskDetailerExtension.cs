@@ -12,7 +12,7 @@ using FreneticUtilities.FreneticExtensions; // Keep for general utilities like T
 
 // Note: No longer importing SDetailer-specific node files as they are removed.
 
-namespace Mask Detailer // Namespace can remain or be changed if you prefer
+namespace MaskDetailerExtension // Namespace can remain or be changed if you prefer
 {
     public class MaskDetailerExtension : Extension
     {
