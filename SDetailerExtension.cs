@@ -57,7 +57,7 @@ namespace SDetailerExtension
         public override void OnInit()
         {
             ComfyUIBackendExtension.NodeToFeatureMap["UltralyticsDetectorProvider"] = "comfyui";
-            ComfyUIBackendExtension.NodeToFeatureMap["SegmDetectorForEach"] = "comfyui"; // Changed from SegmDetectorSEGS
+            ComfyUIBackendExtension.NodeToFeatureMap["SegmDetectorSEGS"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["DetailerForEach"] = "comfyui";
 
             List<string> GetSegmModels(Session session)
@@ -89,8 +89,8 @@ namespace SDetailerExtension
                 GetValues: GetSegmModels
             ));
 
-            // Parameters for SegmDetectorForEach
-            SegmThreshold = T2IParamTypes.Register<float>(new("Segm. Threshold", "Detection threshold for SegmDetectorForEach.", "0.5",
+            // Parameters for SEGM detection (SegmDetectorSEGS)
+            SegmThreshold = T2IParamTypes.Register<float>(new("Segm. Threshold", "Detection threshold for SegmDetectorSEGS.", "0.5",
                 Min: 0.0f, Max: 1.0f, Step: 0.01f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_threshold", OrderPriority: 15));
 
             SegmDilation = T2IParamTypes.Register<int>(new("Segm. Dilation", "Dilation/erosion amount for segmentation masks. Positive dilates, negative erodes.", "10",
@@ -100,9 +100,9 @@ namespace SDetailerExtension
                 Min: 1.0f, Max: 100f, Step: 0.1f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_crop_factor", OrderPriority: 17));
 
             SegmDropSize = T2IParamTypes.Register<int>(new("Segm. Drop Size", "Segments smaller than this pixel size will be dropped.", "10",
-                Min: 1, Max: 8192, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_drop_size", OrderPriority: 18)); // Max based on typical MAX_RESOLUTION
+                Min: 1, Max: 8192, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_drop_size", OrderPriority: 18));
 
-            SegmLabels = T2IParamTypes.Register<string>(new("Segm. Labels", "Comma-separated list of class names or IDs for SegmDetectorForEach (e.g., 'person, car'). 'all' for all classes.", "all",
+            SegmLabels = T2IParamTypes.Register<string>(new("Segm. Labels", "Comma-separated list of class names or IDs for SegmDetectorSEGS (e.g., 'person, car'). 'all' for all classes.", "all",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_labels", OrderPriority: 20));
 
 
@@ -193,7 +193,7 @@ namespace SDetailerExtension
                 });
                 JArray segmDetectorOutput = new JArray { detectorProviderNode, 1 };
 
-                // Node 2: SegmDetectorForEach
+                // Node 2: SegmDetectorSEGS (the actual node name from ComfyUI-Impact Pack)
                 var segsDetectorInputs = new JObject
                 {
                     ["segm_detector"] = segmDetectorOutput,
@@ -204,7 +204,7 @@ namespace SDetailerExtension
                     ["drop_size"] = g.UserInput.Get(SegmDropSize, 10),
                     ["labels"] = g.UserInput.Get(SegmLabels, "all")
                 };
-                string segsNode = g.CreateNode("SegmDetectorForEach", segsDetectorInputs); // Changed node name
+                string segsNode = g.CreateNode("SegmDetectorSEGS", segsDetectorInputs);
                 JArray detectedSegsOutput = new JArray { segsNode, 0 };
 
                 // Prepare inputs for DetailerForEach (Node 3)
