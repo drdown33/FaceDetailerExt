@@ -8,6 +8,100 @@ import cv2
 from impact.core import SEG
 from impact.utils import *
 
+# Import the subcore's load_yolo function which handles PyTorch 2.6+ security properly
+try:
+    # Try to import from the Impact Pack subcore if available
+    from impact.impact_pack.impact_subpack import subcore
+    load_yolo_model = subcore.load_yolo
+    logging.info("[YoloDetectorProvider] Using Impact Pack subcore's load_yolo function")
+except ImportError:
+    # Fallback to our own implementation with comprehensive safe globals
+    logging.warning("[YoloDetectorProvider] Impact Pack subcore not available, using fallback")
+    
+    def load_yolo_model(model_path):
+        """Load YOLO model using ultralytics with PyTorch 2.6 compatibility"""
+        try:
+            from ultralytics import YOLO
+            
+            # Use the same comprehensive approach as Impact Pack subcore
+            if hasattr(torch.serialization, 'safe_globals'):
+                # Import all necessary modules
+                import ultralytics.nn.tasks
+                import ultralytics.nn.modules.conv
+                import ultralytics.nn.modules.block
+                import ultralytics.nn.modules.head
+                import ultralytics.nn.modules as modules
+                import ultralytics.nn.modules.block as block_modules
+                import torch.nn.modules as torch_modules
+                import ultralytics.utils.loss as loss_modules
+                from ultralytics.utils import IterableSimpleNamespace
+                from ultralytics.utils.tal import TaskAlignedAssigner
+                import inspect
+                
+                # Build comprehensive whitelist like Impact Pack does
+                torch_whitelist = []
+                
+                # Add all ultralytics.nn.modules classes
+                for name, obj in inspect.getmembers(modules):
+                    if inspect.isclass(obj) and obj.__module__.startswith("ultralytics.nn.modules"):
+                        aliasObj = type(name, (obj,), {})
+                        aliasObj.__module__ = "ultralytics.nn.modules"
+                        torch_whitelist.append(obj)
+                        torch_whitelist.append(aliasObj)
+
+                for name, obj in inspect.getmembers(block_modules):
+                    if inspect.isclass(obj) and obj.__module__.startswith("ultralytics.nn.modules"):
+                        aliasObj = type(name, (obj,), {})
+                        aliasObj.__module__ = "ultralytics.nn.modules.block"
+                        torch_whitelist.append(obj)
+                        torch_whitelist.append(aliasObj)
+
+                for name, obj in inspect.getmembers(loss_modules):
+                    if inspect.isclass(obj) and obj.__module__.startswith("ultralytics.utils.loss"):
+                        aliasObj = type(name, (obj,), {})
+                        aliasObj.__module__ = "ultralytics.yolo.utils.loss"
+                        torch_whitelist.append(obj)
+                        torch_whitelist.append(aliasObj)
+
+                for name, obj in inspect.getmembers(torch_modules):
+                    if inspect.isclass(obj) and obj.__module__.startswith("torch.nn.modules"):
+                        torch_whitelist.append(obj)
+                
+                # Add specific classes that might be missing
+                torch_whitelist.extend([
+                    ultralytics.nn.tasks.DetectionModel,
+                    ultralytics.nn.tasks.SegmentationModel,
+                    IterableSimpleNamespace,
+                    TaskAlignedAssigner,
+                ])
+                
+                # Add aliases for backward compatibility
+                aliasIterableSimpleNamespace = type("IterableSimpleNamespace", (IterableSimpleNamespace,), {})
+                aliasIterableSimpleNamespace.__module__ = "ultralytics.yolo.utils"
+                
+                aliasTaskAlignedAssigner = type("TaskAlignedAssigner", (TaskAlignedAssigner,), {})
+                aliasTaskAlignedAssigner.__module__ = "ultralytics.yolo.utils.tal"
+                
+                torch_whitelist.extend([aliasIterableSimpleNamespace, aliasTaskAlignedAssigner])
+                
+                with torch.serialization.safe_globals(torch_whitelist):
+                    try:
+                        return YOLO(model_path)
+                    except ModuleNotFoundError:
+                        # https://github.com/ultralytics/ultralytics/issues/3856
+                        YOLO("yolov8n.pt")
+                        return YOLO(model_path)
+            else:
+                # Older PyTorch versions
+                try:
+                    return YOLO(model_path)
+                except ModuleNotFoundError:
+                    YOLO("yolov8n.pt")
+                    return YOLO(model_path)
+                    
+        except ImportError:
+            raise ImportError("ultralytics package is required. Install with: pip install ultralytics")
+
 
 def create_segmasks(results):
     """Convert detection results to segmask format expected by Impact Pack"""
@@ -241,141 +335,6 @@ class YoloSegmDetector:
 
     def setAux(self, x):
         pass
-
-
-def load_yolo_model(model_path):
-    """Load YOLO model using ultralytics with PyTorch 2.6 compatibility"""
-    try:
-        import torch
-        from ultralytics import YOLO
-        
-        # Handle PyTorch 2.6+ weights_only security restrictions
-        try:
-            # Add comprehensive safe globals for ultralytics
-            if hasattr(torch.serialization, 'add_safe_globals'):
-                import ultralytics.nn.tasks
-                import ultralytics.nn.modules.conv
-                import ultralytics.nn.modules.block
-                import ultralytics.nn.modules.head
-                import torch.nn.modules.container
-                import torch.nn.modules.conv
-                import torch.nn.modules.batchnorm
-                import torch.nn.modules.activation
-                import torch.nn.modules.pooling
-                import torch.nn.modules.upsampling
-                
-                safe_classes = [
-                    # Ultralytics task models
-                    ultralytics.nn.tasks.SegmentationModel,
-                    ultralytics.nn.tasks.DetectionModel,
-                    ultralytics.nn.tasks.ClassificationModel,
-                    ultralytics.nn.tasks.PoseModel,
-                    ultralytics.nn.tasks.OBBModel,
-                    
-                    # Ultralytics custom modules
-                    ultralytics.nn.modules.conv.Conv,
-                    ultralytics.nn.modules.conv.DWConv,
-                    ultralytics.nn.modules.conv.GhostConv,
-                    ultralytics.nn.modules.conv.RepConv,
-                    ultralytics.nn.modules.block.C2f,
-                    ultralytics.nn.modules.block.C3,
-                    ultralytics.nn.modules.block.Bottleneck,
-                    ultralytics.nn.modules.block.BottleneckCSP,
-                    ultralytics.nn.modules.block.SPPF,
-                    ultralytics.nn.modules.head.Detect,
-                    ultralytics.nn.modules.head.Segment,
-                    ultralytics.nn.modules.head.Pose,
-                    ultralytics.nn.modules.head.Classify,
-                    
-                    # Standard PyTorch modules
-                    torch.nn.modules.container.Sequential,
-                    torch.nn.modules.container.ModuleList,
-                    torch.nn.modules.conv.Conv2d,
-                    torch.nn.modules.batchnorm.BatchNorm2d,
-                    torch.nn.modules.activation.SiLU,
-                    torch.nn.modules.activation.ReLU,
-                    torch.nn.modules.activation.LeakyReLU,
-                    torch.nn.modules.pooling.MaxPool2d,
-                    torch.nn.modules.pooling.AdaptiveAvgPool2d,
-                    torch.nn.modules.upsampling.Upsample,
-                ]
-                torch.serialization.add_safe_globals(safe_classes)
-        except (AttributeError, ImportError) as e:
-            logging.debug(f"Could not add safe globals: {e}")
-        
-        # Try loading with safe_globals context manager if available
-        try:
-            if hasattr(torch.serialization, 'safe_globals'):
-                import ultralytics.nn.tasks
-                import ultralytics.nn.modules.conv
-                import ultralytics.nn.modules.block
-                import ultralytics.nn.modules.head
-                import torch.nn.modules.container
-                import torch.nn.modules.conv
-                import torch.nn.modules.batchnorm
-                import torch.nn.modules.activation
-                import torch.nn.modules.pooling
-                import torch.nn.modules.upsampling
-                
-                safe_classes = [
-                    # Ultralytics task models
-                    ultralytics.nn.tasks.SegmentationModel,
-                    ultralytics.nn.tasks.DetectionModel,
-                    ultralytics.nn.tasks.ClassificationModel,
-                    ultralytics.nn.tasks.PoseModel,
-                    ultralytics.nn.tasks.OBBModel,
-                    
-                    # Ultralytics custom modules
-                    ultralytics.nn.modules.conv.Conv,
-                    ultralytics.nn.modules.conv.DWConv,
-                    ultralytics.nn.modules.conv.GhostConv,
-                    ultralytics.nn.modules.conv.RepConv,
-                    ultralytics.nn.modules.block.C2f,
-                    ultralytics.nn.modules.block.C3,
-                    ultralytics.nn.modules.block.Bottleneck,
-                    ultralytics.nn.modules.block.BottleneckCSP,
-                    ultralytics.nn.modules.block.SPPF,
-                    ultralytics.nn.modules.head.Detect,
-                    ultralytics.nn.modules.head.Segment,
-                    ultralytics.nn.modules.head.Pose,
-                    ultralytics.nn.modules.head.Classify,
-                    
-                    # Standard PyTorch modules
-                    torch.nn.modules.container.Sequential,
-                    torch.nn.modules.container.ModuleList,
-                    torch.nn.modules.conv.Conv2d,
-                    torch.nn.modules.batchnorm.BatchNorm2d,
-                    torch.nn.modules.activation.SiLU,
-                    torch.nn.modules.activation.ReLU,
-                    torch.nn.modules.activation.LeakyReLU,
-                    torch.nn.modules.pooling.MaxPool2d,
-                    torch.nn.modules.pooling.AdaptiveAvgPool2d,
-                    torch.nn.modules.upsampling.Upsample,
-                ]
-                
-                with torch.serialization.safe_globals(safe_classes):
-                    return YOLO(model_path)
-            else:
-                return YOLO(model_path)
-        except Exception as e:
-            # If safe loading fails, try with the legacy approach
-            logging.warning(f"Safe loading failed, attempting legacy load: {e}")
-            
-            # Temporarily patch torch.load to use weights_only=False
-            original_load = torch.load
-            def patched_load(*args, **kwargs):
-                if 'weights_only' not in kwargs:
-                    kwargs['weights_only'] = False
-                return original_load(*args, **kwargs)
-            
-            try:
-                torch.load = patched_load
-                return YOLO(model_path)
-            finally:
-                torch.load = original_load
-                
-    except ImportError:
-        raise ImportError("ultralytics package is required. Install with: pip install ultralytics")
 
 
 class YoloDetectorProvider:
