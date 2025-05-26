@@ -1,7 +1,29 @@
 import os
 import folder_paths
-from . import subcore
 import logging
+
+
+# Standalone detector classes that mimic the Impact Pack's functionality
+class YoloBBoxDetector:
+    def __init__(self, model):
+        self.model = model
+
+class YoloSegmDetector:
+    def __init__(self, model):
+        self.model = model
+
+class NoSegmDetector:
+    def __init__(self):
+        pass
+
+
+def load_yolo_model(model_path):
+    """Load YOLO model using ultralytics"""
+    try:
+        from ultralytics import YOLO
+        return YOLO(model_path)
+    except ImportError:
+        raise ImportError("ultralytics package is required. Install with: pip install ultralytics")
 
 
 class YoloDetectorProvider:
@@ -29,11 +51,11 @@ class YoloDetectorProvider:
 
             raise ValueError(f"[YoloDetectorProvider] model file '{model_name}' is not found.")
 
-        model = subcore.load_yolo(model_path)
+        model = load_yolo_model(model_path)
 
         # Return both bbox and segm detectors for all models
         # The actual functionality will depend on the model's capabilities
-        return subcore.UltraBBoxDetector(model), subcore.UltraSegmDetector(model)
+        return YoloBBoxDetector(model), YoloSegmDetector(model)
 
 
 NODE_CLASS_MAPPINGS = {
