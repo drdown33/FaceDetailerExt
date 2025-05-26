@@ -56,32 +56,47 @@ namespace SDetailerExtension
 
         public override void OnInit()
         {
-            ComfyUIBackendExtension.NodeToFeatureMap["YoloDetectorProvider"] = "comfyui";
+            // Map Impact Pack nodes instead of custom nodes
+            ComfyUIBackendExtension.NodeToFeatureMap["UltralyticsDetectorProvider"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["SegmDetectorSEGS"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["DetailerForEach"] = "comfyui";
 
-            List<string> GetYoloModels(Session session)
+            List<string> GetUltralyticsModels(Session session)
             {
                 try
                 {
-                    // Use the same model location as SwarmYoloDetection
+                    var models = new List<string>();
+                    
+                    // Try to get models from both SwarmUI's yolov8 folder and Impact Pack's ultralytics folders
                     var yoloModels = ComfyUIBackendExtension.YoloModels?.ToList();
                     if (yoloModels != null && yoloModels.Count > 0)
                     {
-                        return yoloModels.Where(m => m != "(None)" && m != null).Prepend("(None)").ToList();
+                        // Add yolov8 models with bbox/ prefix for compatibility with UltralyticsDetectorProvider
+                        models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "bbox/" + m));
+                        
+                        // Also add them with segm/ prefix
+                        models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "segm/" + m));
+                        
+                        // And add them without prefix for general ultralytics compatibility
+                        models.AddRange(yoloModels.Where(m => m != "(None)" && m != null));
+                    }
+                    
+                    if (models.Count > 0)
+                    {
+                        return models.Distinct().Prepend("(None)").ToList();
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logs.Error($"Error getting YOLO models: {ex.Message}");
+                    Logs.Error($"Error getting Ultralytics models: {ex.Message}");
                 }
                 return ["(None)"];
             }
 
-            DetectionModel = T2IParamTypes.Register<string>(new("YOLO Detection Model", "Select YOLO model for detection. Models from the same location as SwarmYoloDetection.",
+            DetectionModel = T2IParamTypes.Register<string>(new("YOLO Detection Model", "Select YOLO model for detection. Models from yolov8 folder, compatible with Impact Pack UltralyticsDetectorProvider.",
                 "(None)",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_detection_model", OrderPriority: 10,
-                GetValues: GetYoloModels
+                GetValues: GetUltralyticsModels
             ));
 
             // Parameters for SEGM detection (SegmDetectorSEGS)
@@ -99,7 +114,6 @@ namespace SDetailerExtension
 
             SegmLabels = T2IParamTypes.Register<string>(new("Segm. Labels", "Comma-separated list of class names or IDs for SegmDetectorSEGS (e.g., 'person, car'). 'all' for all classes.", "all",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_labels", OrderPriority: 20));
-
 
             // Parameters for DetailerForEach (remain largely the same, adjusted order priorities)
             GuideSize = T2IParamTypes.Register<float>(new("Detailer Guide Size", "Guide size for detailing.", "512",
@@ -182,7 +196,8 @@ namespace SDetailerExtension
 
                 JArray lastNode = g.FinalImageOut;
 
-                string detectorProviderNode = g.CreateNode("YoloDetectorProvider", new JObject
+                // Use Impact Pack's UltralyticsDetectorProvider instead of custom YoloDetectorProvider
+                string detectorProviderNode = g.CreateNode("UltralyticsDetectorProvider", new JObject
                 {
                     ["model_name"] = detectionModelName
                 });
