@@ -251,25 +251,53 @@ def load_yolo_model(model_path):
         
         # Handle PyTorch 2.6+ weights_only security restrictions
         try:
-            # Add more comprehensive safe globals
+            # Add comprehensive safe globals for ultralytics
             if hasattr(torch.serialization, 'add_safe_globals'):
                 import ultralytics.nn.tasks
+                import ultralytics.nn.modules.conv
+                import ultralytics.nn.modules.block
+                import ultralytics.nn.modules.head
                 import torch.nn.modules.container
                 import torch.nn.modules.conv
                 import torch.nn.modules.batchnorm
                 import torch.nn.modules.activation
+                import torch.nn.modules.pooling
+                import torch.nn.modules.upsampling
                 
                 safe_classes = [
+                    # Ultralytics task models
                     ultralytics.nn.tasks.SegmentationModel,
                     ultralytics.nn.tasks.DetectionModel,
                     ultralytics.nn.tasks.ClassificationModel,
                     ultralytics.nn.tasks.PoseModel,
                     ultralytics.nn.tasks.OBBModel,
+                    
+                    # Ultralytics custom modules
+                    ultralytics.nn.modules.conv.Conv,
+                    ultralytics.nn.modules.conv.DWConv,
+                    ultralytics.nn.modules.conv.GhostConv,
+                    ultralytics.nn.modules.conv.RepConv,
+                    ultralytics.nn.modules.block.C2f,
+                    ultralytics.nn.modules.block.C3,
+                    ultralytics.nn.modules.block.Bottleneck,
+                    ultralytics.nn.modules.block.BottleneckCSP,
+                    ultralytics.nn.modules.block.SPPF,
+                    ultralytics.nn.modules.head.Detect,
+                    ultralytics.nn.modules.head.Segment,
+                    ultralytics.nn.modules.head.Pose,
+                    ultralytics.nn.modules.head.Classify,
+                    
+                    # Standard PyTorch modules
                     torch.nn.modules.container.Sequential,
                     torch.nn.modules.container.ModuleList,
                     torch.nn.modules.conv.Conv2d,
                     torch.nn.modules.batchnorm.BatchNorm2d,
-                    torch.nn.modules.activation.SiLU
+                    torch.nn.modules.activation.SiLU,
+                    torch.nn.modules.activation.ReLU,
+                    torch.nn.modules.activation.LeakyReLU,
+                    torch.nn.modules.pooling.MaxPool2d,
+                    torch.nn.modules.pooling.AdaptiveAvgPool2d,
+                    torch.nn.modules.upsampling.Upsample,
                 ]
                 torch.serialization.add_safe_globals(safe_classes)
         except (AttributeError, ImportError) as e:
@@ -279,22 +307,50 @@ def load_yolo_model(model_path):
         try:
             if hasattr(torch.serialization, 'safe_globals'):
                 import ultralytics.nn.tasks
+                import ultralytics.nn.modules.conv
+                import ultralytics.nn.modules.block
+                import ultralytics.nn.modules.head
                 import torch.nn.modules.container
                 import torch.nn.modules.conv
                 import torch.nn.modules.batchnorm
                 import torch.nn.modules.activation
+                import torch.nn.modules.pooling
+                import torch.nn.modules.upsampling
                 
                 safe_classes = [
+                    # Ultralytics task models
                     ultralytics.nn.tasks.SegmentationModel,
                     ultralytics.nn.tasks.DetectionModel,
                     ultralytics.nn.tasks.ClassificationModel,
                     ultralytics.nn.tasks.PoseModel,
                     ultralytics.nn.tasks.OBBModel,
+                    
+                    # Ultralytics custom modules
+                    ultralytics.nn.modules.conv.Conv,
+                    ultralytics.nn.modules.conv.DWConv,
+                    ultralytics.nn.modules.conv.GhostConv,
+                    ultralytics.nn.modules.conv.RepConv,
+                    ultralytics.nn.modules.block.C2f,
+                    ultralytics.nn.modules.block.C3,
+                    ultralytics.nn.modules.block.Bottleneck,
+                    ultralytics.nn.modules.block.BottleneckCSP,
+                    ultralytics.nn.modules.block.SPPF,
+                    ultralytics.nn.modules.head.Detect,
+                    ultralytics.nn.modules.head.Segment,
+                    ultralytics.nn.modules.head.Pose,
+                    ultralytics.nn.modules.head.Classify,
+                    
+                    # Standard PyTorch modules
                     torch.nn.modules.container.Sequential,
                     torch.nn.modules.container.ModuleList,
                     torch.nn.modules.conv.Conv2d,
                     torch.nn.modules.batchnorm.BatchNorm2d,
-                    torch.nn.modules.activation.SiLU
+                    torch.nn.modules.activation.SiLU,
+                    torch.nn.modules.activation.ReLU,
+                    torch.nn.modules.activation.LeakyReLU,
+                    torch.nn.modules.pooling.MaxPool2d,
+                    torch.nn.modules.pooling.AdaptiveAvgPool2d,
+                    torch.nn.modules.upsampling.Upsample,
                 ]
                 
                 with torch.serialization.safe_globals(safe_classes):
