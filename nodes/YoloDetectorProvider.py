@@ -4,17 +4,34 @@ import logging
 import torch
 import numpy as np
 from PIL import Image
+import cv2
+from impact.core import SEG
+from impact.utils import *
 
 
-# Standalone detector classes that implement the Impact Pack interface
+def create_segmasks(results):
+    """Convert detection results to segmask format expected by Impact Pack"""
+    labels = results[0] if len(results) > 0 else []
+    bboxs = results[1] if len(results) > 1 else []
+    segms = results[2] if len(results) > 2 else []
+    confidence = results[3] if len(results) > 3 else []
+
+    results = []
+    for i in range(len(segms)):
+        item = (bboxs[i], segms[i].astype(np.float32), confidence[i])
+        results.append(item)
+    return results
+
+
 class YoloBBoxDetector:
     def __init__(self, model):
         self.model = model
 
-    def detect(self, image, threshold, dilation, crop_factor, drop_size, detailer_hook=None):
-        # Convert ComfyUI image tensor to PIL Image
+    def detect(self, image, threshold, dilation, crop_factor, drop_size=1, detailer_hook=None):
+        drop_size = max(drop_size, 1)
+        
+        # Convert ComfyUI image tensor to format expected by YOLO
         if isinstance(image, torch.Tensor):
-            # Assume image is in format [batch, height, width, channels] and normalized 0-1
             img_array = (image.squeeze().cpu().numpy() * 255).astype(np.uint8)
             if img_array.ndim == 3 and img_array.shape[2] == 3:
                 pil_image = Image.fromarray(img_array)
@@ -26,37 +43,92 @@ class YoloBBoxDetector:
         # Run YOLO detection
         results = self.model.predict(pil_image, conf=threshold, verbose=False)
         
-        # Extract bounding boxes
+        # Convert to Impact Pack format
         if results and len(results) > 0 and results[0].boxes is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()  # [x1, y1, x2, y2] format
             confidences = results[0].boxes.conf.cpu().numpy()
             class_ids = results[0].boxes.cls.cpu().numpy()
             
-            # Filter by drop_size (minimum box area)
-            filtered_boxes = []
+            # Create masks from bounding boxes
+            img_height, img_width = img_array.shape[:2]
+            
+            labels = []
+            bboxs = []
+            segms = []
+            scores = []
+            
             for i, box in enumerate(boxes):
                 x1, y1, x2, y2 = box
                 area = (x2 - x1) * (y2 - y1)
+                
                 if area >= drop_size:
-                    filtered_boxes.append({
-                        'bbox': box,
-                        'confidence': confidences[i],
-                        'class_id': class_ids[i]
-                    })
+                    # Create rectangular mask from bounding box
+                    mask = np.zeros((img_height, img_width), dtype=np.float32)
+                    mask[int(y1):int(y2), int(x1):int(x2)] = 1.0
+                    
+                    labels.append("A")  # Generic label like Impact Pack's BBoxDetector
+                    bboxs.append([y1, x1, y2, x2])  # Convert to y1,x1,y2,x2 format like Impact Pack
+                    segms.append(mask)
+                    scores.append(confidences[i])
             
-            return filtered_boxes
+            mmdet_results = [labels, bboxs, segms, scores]
         else:
-            return []
+            mmdet_results = [[], [], [], []]
+        
+        segmasks = create_segmasks(mmdet_results)
+
+        if dilation != 0:
+            segmasks = dilate_masks(segmasks, dilation)
+
+        items = []
+        h = image.shape[1]
+        w = image.shape[2]
+
+        for x in segmasks:
+            item_bbox = x[0]
+            item_mask = x[1]
+            confidence = x[2]
+
+            y1, x1, y2, x2 = item_bbox
+
+            if x2 - x1 > drop_size and y2 - y1 > drop_size:
+                crop_region = make_crop_region(w, h, item_bbox, crop_factor)
+                
+                if detailer_hook is not None:
+                    crop_region = detailer_hook.post_crop_region(w, h, item_bbox, crop_region)
+
+                cropped_image = crop_image(image, crop_region)
+                cropped_mask = crop_ndarray2(item_mask, crop_region)
+
+                item = SEG(cropped_image, cropped_mask, confidence, crop_region, item_bbox, "A", None)
+                items.append(item)
+
+        shape = h, w
+        segs = shape, items
+
+        if detailer_hook is not None and hasattr(detailer_hook, "post_detection"):
+            segs = detailer_hook.post_detection(segs)
+
+        return segs
+
+    def detect_combined(self, image, threshold, dilation):
+        segs = self.detect(image, threshold, dilation, 1.0, 1)
+        from impact.core import segs_to_combined_mask
+        return segs_to_combined_mask(segs)
+
+    def setAux(self, x):
+        pass
 
 
 class YoloSegmDetector:
     def __init__(self, model):
         self.model = model
 
-    def detect(self, image, threshold, dilation, crop_factor, drop_size, detailer_hook=None):
-        # Convert ComfyUI image tensor to PIL Image
+    def detect(self, image, threshold, dilation, crop_factor, drop_size=1, detailer_hook=None):
+        drop_size = max(drop_size, 1)
+        
+        # Convert ComfyUI image tensor to format expected by YOLO
         if isinstance(image, torch.Tensor):
-            # Assume image is in format [batch, height, width, channels] and normalized 0-1
             img_array = (image.squeeze().cpu().numpy() * 255).astype(np.uint8)
             if img_array.ndim == 3 and img_array.shape[2] == 3:
                 pil_image = Image.fromarray(img_array)
@@ -68,74 +140,107 @@ class YoloSegmDetector:
         # Run YOLO segmentation
         results = self.model.predict(pil_image, conf=threshold, verbose=False)
         
-        # Extract segmentation masks and create SEGS format
-        segs = []
+        # Convert to Impact Pack format
         if results and len(results) > 0:
             if hasattr(results[0], 'masks') and results[0].masks is not None:
+                # Segmentation model - use actual masks
                 masks = results[0].masks.data.cpu().numpy()  # [N, H, W]
                 boxes = results[0].boxes.xyxy.cpu().numpy()  # [x1, y1, x2, y2] format
                 confidences = results[0].boxes.conf.cpu().numpy()
                 class_ids = results[0].boxes.cls.cpu().numpy()
                 
+                labels = []
+                bboxs = []
+                segms = []
+                scores = []
+                
                 for i, mask in enumerate(masks):
-                    # Apply dilation if specified
-                    if dilation != 0:
-                        import cv2
-                        kernel = np.ones((abs(dilation), abs(dilation)), np.uint8)
-                        if dilation > 0:
-                            mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(np.float32)
-                        else:
-                            mask = cv2.erode(mask.astype(np.uint8), kernel, iterations=1).astype(np.float32)
-                    
-                    # Check if mask area meets drop_size requirement
                     mask_area = np.sum(mask > 0.5)
                     if mask_area >= drop_size:
                         x1, y1, x2, y2 = boxes[i]
                         
-                        # Create SEGS format (this is a simplified version)
-                        seg = {
-                            'mask': torch.from_numpy(mask),
-                            'bbox': (int(x1), int(y1), int(x2), int(y2)),
-                            'confidence': float(confidences[i]),
-                            'class_id': int(class_ids[i]),
-                            'crop_region': (int(x1), int(y1), int(x2), int(y2))
-                        }
-                        segs.append(seg)
+                        labels.append("A")  # Generic label
+                        bboxs.append([y1, x1, y2, x2])  # Convert to y1,x1,y2,x2 format like Impact Pack
+                        segms.append(mask.astype(np.float32))
+                        scores.append(confidences[i])
+                
+                mmdet_results = [labels, bboxs, segms, scores]
             
             elif hasattr(results[0], 'boxes') and results[0].boxes is not None:
-                # Fallback to bounding boxes if no segmentation masks
+                # Detection model - create rectangular masks from bounding boxes
                 boxes = results[0].boxes.xyxy.cpu().numpy()
                 confidences = results[0].boxes.conf.cpu().numpy()
                 class_ids = results[0].boxes.cls.cpu().numpy()
                 
-                img_height, img_width = image.shape[1:3] if isinstance(image, torch.Tensor) else (pil_image.height, pil_image.width)
+                img_height, img_width = img_array.shape[:2]
+                
+                labels = []
+                bboxs = []
+                segms = []
+                scores = []
                 
                 for i, box in enumerate(boxes):
                     x1, y1, x2, y2 = box
                     area = (x2 - x1) * (y2 - y1)
                     if area >= drop_size:
-                        # Create a rectangular mask from bounding box
+                        # Create rectangular mask from bounding box
                         mask = np.zeros((img_height, img_width), dtype=np.float32)
                         mask[int(y1):int(y2), int(x1):int(x2)] = 1.0
                         
-                        seg = {
-                            'mask': torch.from_numpy(mask),
-                            'bbox': (int(x1), int(y1), int(x2), int(y2)),
-                            'confidence': float(confidences[i]),
-                            'class_id': int(class_ids[i]),
-                            'crop_region': (int(x1), int(y1), int(x2), int(y2))
-                        }
-                        segs.append(seg)
+                        labels.append("A")
+                        bboxs.append([y1, x1, y2, x2])  # Convert to y1,x1,y2,x2 format like Impact Pack
+                        segms.append(mask)
+                        scores.append(confidences[i])
+                
+                mmdet_results = [labels, bboxs, segms, scores]
+            else:
+                mmdet_results = [[], [], [], []]
+        else:
+            mmdet_results = [[], [], [], []]
         
+        segmasks = create_segmasks(mmdet_results)
+
+        if dilation != 0:
+            segmasks = dilate_masks(segmasks, dilation)
+
+        items = []
+        h = image.shape[1]
+        w = image.shape[2]
+        
+        for x in segmasks:
+            item_bbox = x[0]
+            item_mask = x[1]
+            confidence = x[2]
+
+            y1, x1, y2, x2 = item_bbox
+
+            if x2 - x1 > drop_size and y2 - y1 > drop_size:
+                crop_region = make_crop_region(w, h, item_bbox, crop_factor)
+                
+                if detailer_hook is not None:
+                    crop_region = detailer_hook.post_crop_region(w, h, item_bbox, crop_region)
+
+                cropped_image = crop_image(image, crop_region)
+                cropped_mask = crop_ndarray2(item_mask, crop_region)
+
+                item = SEG(cropped_image, cropped_mask, confidence, crop_region, item_bbox, "A", None)
+                items.append(item)
+
+        shape = h, w
+        segs = shape, items
+
+        if detailer_hook is not None and hasattr(detailer_hook, "post_detection"):
+            segs = detailer_hook.post_detection(segs)
+
         return segs
 
+    def detect_combined(self, image, threshold, dilation):
+        segs = self.detect(image, threshold, dilation, 1.0, 1)
+        from impact.core import segs_to_combined_mask
+        return segs_to_combined_mask(segs)
 
-class NoSegmDetector:
-    def __init__(self):
+    def setAux(self, x):
         pass
-    
-    def detect(self, image, threshold, dilation, crop_factor, drop_size, detailer_hook=None):
-        return []
 
 
 def load_yolo_model(model_path):
