@@ -262,7 +262,7 @@ namespace SDetailerExtension
                     ["positive"] = positiveCond,
                     ["negative"] = negativeCond,
                     ["guide_size"] = g.UserInput.Get(GuideSize, 512f),
-                    ["guide_size_for_bbox"] = g.UserInput.Get(GuideSizeForBBox, true),
+                    ["guide_size_for"] = g.UserInput.Get(GuideSizeForBBox, true) ? "bbox" : "crop_region",
                     ["max_size"] = g.UserInput.Get(MaxSize, 1024f),
                     ["seed"] = g.UserInput.Get(Seed, 0L),
                     ["steps"] = finalSteps,
@@ -270,11 +270,12 @@ namespace SDetailerExtension
                     ["sampler_name"] = finalSampler,
                     ["scheduler"] = finalScheduler,
                     ["denoise"] = g.UserInput.Get(DenoisingStrength, 0.5f),
-                    ["feather"] = g.UserInput.Get(FeatherAmount, 5), // This is 'feather' for DetailerForEach
-                    ["noise_mask"] = g.UserInput.Get(NoiseMaskEnabled, true), // This is 'noise_mask' for DetailerForEach
-                    ["force_inpaint"] = g.UserInput.Get(ForceInpaintEnabled, true), // This is 'force_inpaint' for DetailerForEach
+                    ["feather"] = g.UserInput.Get(FeatherAmount, 5),
+                    ["noise_mask"] = g.UserInput.Get(NoiseMaskEnabled, true),
+                    ["force_inpaint"] = g.UserInput.Get(ForceInpaintEnabled, true),
+                    ["wildcard"] = "",  // Empty wildcard - no dynamic prompts
                     ["cycle"] = g.UserInput.Get(DetailerCycleCount, 1),
-                    ["noise_mask_feather"] = g.UserInput.Get(NoiseMaskFeatherAmount, 20) // This is 'noise_mask_feather' for DetailerForEach
+                    ["noise_mask_feather"] = g.UserInput.Get(NoiseMaskFeatherAmount, 20)
                 };
                 string detailerNode = g.CreateNode("DetailerForEach", detailerInputs);
 
