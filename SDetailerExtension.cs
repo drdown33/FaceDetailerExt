@@ -64,19 +64,17 @@ namespace SDetailerExtension
             {
                 try
                 {
-                    var comfySegmPath = Path.Combine(ComfyUIBackendExtension.ComfyPathSafe, "models", "ultralytics", "segm");
-                    if (Directory.Exists(comfySegmPath))
-                    {
-                        return Directory.EnumerateFiles(comfySegmPath, "*.pt", SearchOption.AllDirectories)
-                            .Concat(Directory.EnumerateFiles(comfySegmPath, "*.safetensors", SearchOption.AllDirectories))
-                            .Select(f => "segm/" + Path.GetRelativePath(comfySegmPath, f).Replace(Path.DirectorySeparatorChar, '/'))
-                            .Prepend("(None)").ToList();
-                    }
                     var yoloModels = ComfyUIBackendExtension.YoloModels?.ToList();
-                     if (yoloModels != null && yoloModels.Any(m => m.StartsWith("segm/")))
+                    if (yoloModels != null && yoloModels.Any(m => m.StartsWith("segm/")))
                     {
-                        return yoloModels.Prepend("(None)").ToList();
+                        return yoloModels.Where(m => m != "(None)" && m != null).Prepend("(None)").ToList();
                     }
+                    // Fallback: try to find models directly if YoloModels doesn't have them
+                    var models = ComfyUIBackendExtension.YoloModels?.ToList();
+                    if (models == null || models.Count == 0) {
+                        return ["(None)"];
+                    }
+                    return models.Where(m => m != "(None)" && m != null).Prepend("(None)").ToList();
                 }
                 catch (Exception ex)
                 {
@@ -105,7 +103,7 @@ namespace SDetailerExtension
                 Min: 1, Max: 8192, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_drop_size", OrderPriority: 18)); // Max based on typical MAX_RESOLUTION
 
             SegmLabels = T2IParamTypes.Register<string>(new("Segm. Labels", "Comma-separated list of class names or IDs for SegmDetectorForEach (e.g., 'person, car'). 'all' for all classes.", "all",
-                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_labels", OrderPriority: 20, ViewType: ParamViewType.TEXTAREA));
+                Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_labels", OrderPriority: 20));
 
 
             // Parameters for DetailerForEach (remain largely the same, adjusted order priorities)
@@ -225,7 +223,7 @@ namespace SDetailerExtension
                     string sdLoaderNode = g.CreateNode("CheckpointLoaderSimple", new JObject { ["ckpt_name"] = sdModel.Name });
                     modelInput = new JArray { sdLoaderNode, 0 };
                     clipInput = new JArray { sdLoaderNode, 1 };
-                     if ((!g.UserInput.TryGet(VAE, out T2IModel currentVaeModel) || currentVaeModel == null) && g.NodeTypes["CheckpointLoaderSimple"].Outputs.Count > 2 && g.NodeTypes["CheckpointLoaderSimple"].Outputs[2] == "VAE")
+                    if (!g.UserInput.TryGet(VAE, out T2IModel currentVaeModel) || currentVaeModel == null)
                     {
                         vaeInput = new JArray { sdLoaderNode, 2 };
                     }
@@ -234,8 +232,8 @@ namespace SDetailerExtension
                 string promptText = g.UserInput.Get(Prompt, "");
                 string negativePromptText = g.UserInput.Get(NegativePrompt, "");
 
-                JArray positiveCond = string.IsNullOrWhiteSpace(promptText) ? g.FinalPrompt : g.CreateConditioning(promptText, clipInput, modelInput, true);
-                JArray negativeCond = string.IsNullOrWhiteSpace(negativePromptText) ? g.FinalNegativePrompt : g.CreateConditioning(negativePromptText, clipInput, modelInput, false);
+                JArray positiveCond = string.IsNullOrWhiteSpace(promptText) ? g.FinalPrompt : g.CreateConditioning(promptText, clipInput, null, true);
+                JArray negativeCond = string.IsNullOrWhiteSpace(negativePromptText) ? g.FinalNegativePrompt : g.CreateConditioning(negativePromptText, clipInput, null, false);
 
                 int finalSteps = g.UserInput.TryGet(Steps, out int stepsVal) ? stepsVal : g.UserInput.Get(T2IParamTypes.Steps);
                 float finalCfg = g.UserInput.TryGet(CFGScale, out float cfgVal) ? cfgVal : (float)g.UserInput.Get(T2IParamTypes.CFGScale);
