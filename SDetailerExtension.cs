@@ -56,37 +56,32 @@ namespace SDetailerExtension
 
         public override void OnInit()
         {
-            ComfyUIBackendExtension.NodeToFeatureMap["UltralyticsDetectorProvider"] = "comfyui";
+            ComfyUIBackendExtension.NodeToFeatureMap["YoloDetectorProvider"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["SegmDetectorSEGS"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["DetailerForEach"] = "comfyui";
 
-            List<string> GetSegmModels(Session session)
+            List<string> GetYoloModels(Session session)
             {
                 try
                 {
+                    // Use the same model location as SwarmYoloDetection
                     var yoloModels = ComfyUIBackendExtension.YoloModels?.ToList();
-                    if (yoloModels != null && yoloModels.Any(m => m.StartsWith("segm/")))
+                    if (yoloModels != null && yoloModels.Count > 0)
                     {
                         return yoloModels.Where(m => m != "(None)" && m != null).Prepend("(None)").ToList();
                     }
-                    // Fallback: try to find models directly if YoloModels doesn't have them
-                    var models = ComfyUIBackendExtension.YoloModels?.ToList();
-                    if (models == null || models.Count == 0) {
-                        return ["(None)"];
-                    }
-                    return models.Where(m => m != "(None)" && m != null).Prepend("(None)").ToList();
                 }
                 catch (Exception ex)
                 {
-                    Logs.Error($"Error getting SEGM models: {ex.Message}");
+                    Logs.Error($"Error getting YOLO models: {ex.Message}");
                 }
                 return ["(None)"];
             }
 
-            DetectionModel = T2IParamTypes.Register<string>(new("SEGM Detection Model", "Select SEGM model (e.g., from 'ultralytics/segm' folder). Ensure model names are prefixed with 'segm/'.",
+            DetectionModel = T2IParamTypes.Register<string>(new("YOLO Detection Model", "Select YOLO model for detection. Models from the same location as SwarmYoloDetection.",
                 "(None)",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_detection_model", OrderPriority: 10,
-                GetValues: GetSegmModels
+                GetValues: GetYoloModels
             ));
 
             // Parameters for SEGM detection (SegmDetectorSEGS)
@@ -187,7 +182,7 @@ namespace SDetailerExtension
 
                 JArray lastNode = g.FinalImageOut;
 
-                string detectorProviderNode = g.CreateNode("UltralyticsDetectorProvider", new JObject
+                string detectorProviderNode = g.CreateNode("YoloDetectorProvider", new JObject
                 {
                     ["model_name"] = detectionModelName
                 });
