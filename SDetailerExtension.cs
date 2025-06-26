@@ -19,7 +19,7 @@ namespace SDetailerExtension
 
         // Parameters for SEGM/BBOX detection
         public static T2IRegisteredParam<string> DetectionModel;
-        public static T2IRegisteredParam<string> DetectorType; // NEW: Explicitly choose model type
+        public static T2IRegisteredParam<string> DetectorType;
         public static T2IRegisteredParam<float> DetectorThreshold;
         public static T2IRegisteredParam<int> Dilation;
         public static T2IRegisteredParam<float> CropFactor;
@@ -71,7 +71,6 @@ namespace SDetailerExtension
                     var yoloModels = ComfyUIBackendExtension.YoloModels?.ToList();
                     if (yoloModels != null && yoloModels.Count > 0)
                     {
-                        // The UI prefixes are for user convenience; the actual model type is now handled by DetectorType
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "bbox/" + m));
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "segm/" + m));
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null));
@@ -94,7 +93,6 @@ namespace SDetailerExtension
                 GetValues: GetUltralyticsModels
             ));
 
-            // NEW PARAMETER to let the user explicitly define the model type
             DetectorType = T2IParamTypes.Register<string>(new("Detector Type", "The type of detector model being used. 'segm' for segmentation, 'bbox' for bounding box.",
                 "segm",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_detector_type", OrderPriority: 12,
@@ -201,18 +199,19 @@ namespace SDetailerExtension
                 {
                     ["model_name"] = detectionModelName
                 });
-                JArray detectorOutput = new JArray { detectorProviderNode, 1 };
 
                 // --- START of UPDATED LOGIC ---
                 string detectorNode;
-                // Use the new DetectorType parameter to determine the workflow path
                 string detectorType = g.UserInput.Get(DetectorType, "segm");
 
+                // Dynamically select the correct output from the UltralyticsDetectorProvider and wire it to the correct node
                 if (detectorType == "segm")
                 {
+                    // For "segm", use the SEGM_DETECTOR output (index 1)
+                    JArray detectorInputLink = new JArray { detectorProviderNode, 1 };
                     var segsDetectorInputs = new JObject
                     {
-                        ["segm_detector"] = detectorOutput,
+                        ["segm_detector"] = detectorInputLink,
                         ["image"] = lastNode,
                         ["threshold"] = g.UserInput.Get(DetectorThreshold, 0.5f),
                         ["dilation"] = g.UserInput.Get(Dilation, 10),
@@ -224,10 +223,11 @@ namespace SDetailerExtension
                 }
                 else // "bbox"
                 {
-                    // Pass all parameters to the BboxDetector as well to prevent argument errors.
+                    // For "bbox", use the BBOX_DETECTOR output (index 0)
+                    JArray detectorInputLink = new JArray { detectorProviderNode, 0 };
                     var bboxDetectorInputs = new JObject
                     {
-                        ["bbox_detector"] = detectorOutput,
+                        ["bbox_detector"] = detectorInputLink,
                         ["image"] = lastNode,
                         ["threshold"] = g.UserInput.Get(DetectorThreshold, 0.5f),
                         ["dilation"] = g.UserInput.Get(Dilation, 10),
