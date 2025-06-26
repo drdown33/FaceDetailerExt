@@ -17,13 +17,13 @@ namespace SDetailerExtension
     {
         public static T2IParamGroup Group = new("SEGS Detailer", Toggles: true, Open: false, OrderPriority: -2);
 
-        // Parameters for SEGM detection (SegmDetectorForEach)
-        public static T2IRegisteredParam<string> DetectionModel; // For UltralyticsDetectorProvider
-        public static T2IRegisteredParam<float> SegmThreshold; // Was ConfidenceThreshold, maps to 'threshold'
+        // Parameters for SEGM/BBOX detection
+        public static T2IRegisteredParam<string> DetectionModel;
+        public static T2IRegisteredParam<float> SegmThreshold;
         public static T2IRegisteredParam<int> SegmDilation;
         public static T2IRegisteredParam<float> SegmCropFactor;
         public static T2IRegisteredParam<int> SegmDropSize;
-        public static T2IRegisteredParam<string> SegmLabels; // Was ClassFilter, maps to 'labels'
+        public static T2IRegisteredParam<string> SegmLabels;
 
         // Parameters for DetailerForEach (SEGSDetailer)
         public static T2IRegisteredParam<float> GuideSize;
@@ -56,9 +56,11 @@ namespace SDetailerExtension
 
         public override void OnInit()
         {
-            // Map Impact Pack nodes instead of custom nodes
+            // Map Impact Pack nodes
             ComfyUIBackendExtension.NodeToFeatureMap["UltralyticsDetectorProvider"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["SegmDetectorSEGS"] = "comfyui";
+            // ADDED: Map BboxDetectorSEGS to allow for bounding-box only models
+            ComfyUIBackendExtension.NodeToFeatureMap["BboxDetectorSEGS"] = "comfyui";
             ComfyUIBackendExtension.NodeToFeatureMap["DetailerForEach"] = "comfyui";
 
             List<string> GetUltralyticsModels(Session session)
@@ -66,21 +68,16 @@ namespace SDetailerExtension
                 try
                 {
                     var models = new List<string>();
-                    
-                    // Try to get models from both SwarmUI's yolov8 folder and Impact Pack's ultralytics folders
                     var yoloModels = ComfyUIBackendExtension.YoloModels?.ToList();
                     if (yoloModels != null && yoloModels.Count > 0)
                     {
                         // Add yolov8 models with bbox/ prefix for compatibility with UltralyticsDetectorProvider
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "bbox/" + m));
-                        
                         // Also add them with segm/ prefix
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null).Select(m => "segm/" + m));
-                        
                         // And add them without prefix for general ultralytics compatibility
                         models.AddRange(yoloModels.Where(m => m != "(None)" && m != null));
                     }
-                    
                     if (models.Count > 0)
                     {
                         return models.Distinct().Prepend("(None)").ToList();
@@ -100,22 +97,22 @@ namespace SDetailerExtension
             ));
 
             // Parameters for SEGM detection (SegmDetectorSEGS)
-            SegmThreshold = T2IParamTypes.Register<float>(new("Segm. Threshold", "Detection threshold for SegmDetectorSEGS.", "0.5",
+            SegmThreshold = T2IParamTypes.Register<float>(new("Detector Threshold", "Detection threshold for the model.", "0.5",
                 Min: 0.0f, Max: 1.0f, Step: 0.01f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_threshold", OrderPriority: 15));
 
-            SegmDilation = T2IParamTypes.Register<int>(new("Segm. Dilation", "Dilation/erosion amount for segmentation masks. Positive dilates, negative erodes.", "10",
+            SegmDilation = T2IParamTypes.Register<int>(new("Segm. Dilation", "Dilation/erosion for segmentation masks. Positive dilates, negative erodes. (Segm models only)", "10",
                 Min: -512, Max: 512, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_dilation", OrderPriority: 16));
             
-            SegmCropFactor = T2IParamTypes.Register<float>(new("Segm. Crop Factor", "Crop factor for the segmentation.", "3.0",
+            SegmCropFactor = T2IParamTypes.Register<float>(new("Segm. Crop Factor", "Crop factor for the segmentation. (Segm models only)", "3.0",
                 Min: 1.0f, Max: 100f, Step: 0.1f, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_crop_factor", OrderPriority: 17));
 
-            SegmDropSize = T2IParamTypes.Register<int>(new("Segm. Drop Size", "Segments smaller than this pixel size will be dropped.", "10",
+            SegmDropSize = T2IParamTypes.Register<int>(new("Segm. Drop Size", "Segments smaller than this pixel size will be dropped. (Segm models only)", "10",
                 Min: 1, Max: 8192, Step: 1, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_drop_size", OrderPriority: 18));
 
-            SegmLabels = T2IParamTypes.Register<string>(new("Segm. Labels", "Comma-separated list of class names or IDs for SegmDetectorSEGS (e.g., 'person, car'). 'all' for all classes.", "all",
+            SegmLabels = T2IParamTypes.Register<string>(new("Detector Labels", "Comma-separated list of class names or IDs (e.g., 'person, car'). 'all' for all classes.", "all",
                 Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_segm_labels", OrderPriority: 20));
 
-            // Parameters for DetailerForEach (remain largely the same, adjusted order priorities)
+            // Parameters for DetailerForEach
             GuideSize = T2IParamTypes.Register<float>(new("Detailer Guide Size", "Guide size for detailing.", "512",
                 Min: 64, Max: 4096, Step: 8, Toggleable: false, Group: Group, FeatureFlag: "comfyui", ID: "segsdetailer_guide_size", OrderPriority: 30));
 
@@ -196,26 +193,49 @@ namespace SDetailerExtension
 
                 JArray lastNode = g.FinalImageOut;
 
-                // Use Impact Pack's UltralyticsDetectorProvider instead of custom YoloDetectorProvider
+                // Node 1: Use Impact Pack's UltralyticsDetectorProvider to load the model
                 string detectorProviderNode = g.CreateNode("UltralyticsDetectorProvider", new JObject
                 {
                     ["model_name"] = detectionModelName
                 });
-                JArray segmDetectorOutput = new JArray { detectorProviderNode, 1 };
+                // This is a reference to the 'detector' output from the provider node, which is the second output (index 1)
+                JArray detectorOutput = new JArray { detectorProviderNode, 1 };
 
-                // Node 2: SegmDetectorSEGS (the actual node name from ComfyUI-Impact Pack)
-                var segsDetectorInputs = new JObject
+                // --- START of UPDATED LOGIC ---
+                // Dynamically choose the detector node based on the model name
+                string detectorNode;
+                if (detectionModelName.Contains("segm", StringComparison.OrdinalIgnoreCase))
                 {
-                    ["segm_detector"] = segmDetectorOutput,
-                    ["image"] = lastNode,
-                    ["threshold"] = g.UserInput.Get(SegmThreshold, 0.5f),
-                    ["dilation"] = g.UserInput.Get(SegmDilation, 10),
-                    ["crop_factor"] = g.UserInput.Get(SegmCropFactor, 3.0f),
-                    ["drop_size"] = g.UserInput.Get(SegmDropSize, 10),
-                    ["labels"] = g.UserInput.Get(SegmLabels, "all")
-                };
-                string segsNode = g.CreateNode("SegmDetectorSEGS", segsDetectorInputs);
-                JArray detectedSegsOutput = new JArray { segsNode, 0 };
+                    // If the model name includes "segm", use the segmentation detector node
+                    var segsDetectorInputs = new JObject
+                    {
+                        ["segm_detector"] = detectorOutput,
+                        ["image"] = lastNode,
+                        ["threshold"] = g.UserInput.Get(SegmThreshold, 0.5f),
+                        ["dilation"] = g.UserInput.Get(SegmDilation, 10),
+                        ["crop_factor"] = g.UserInput.Get(SegmCropFactor, 3.0f),
+                        ["drop_size"] = g.UserInput.Get(SegmDropSize, 10),
+                        ["labels"] = g.UserInput.Get(SegmLabels, "all")
+                    };
+                    detectorNode = g.CreateNode("SegmDetectorSEGS", segsDetectorInputs);
+                }
+                else
+                {
+                    // Otherwise, fall back to the bounding box detector node
+                    var bboxDetectorInputs = new JObject
+                    {
+                        ["bbox_detector"] = detectorOutput,
+                        ["image"] = lastNode,
+                        ["threshold"] = g.UserInput.Get(SegmThreshold, 0.5f), // Reusing the same threshold parameter
+                        ["labels"] = g.UserInput.Get(SegmLabels, "all")       // Reusing the same labels parameter
+                    };
+                    detectorNode = g.CreateNode("BboxDetectorSEGS", bboxDetectorInputs);
+                }
+                
+                // The output from either detector node is the 'SEGS' data needed by the detailer
+                JArray detectedSegsOutput = new JArray { detectorNode, 0 };
+                // --- END of UPDATED LOGIC ---
+
 
                 // Prepare inputs for DetailerForEach (Node 3)
                 JArray modelInput = g.FinalModel;
@@ -255,7 +275,7 @@ namespace SDetailerExtension
                 var detailerInputs = new JObject
                 {
                     ["image"] = lastNode,
-                    ["segs"] = detectedSegsOutput,
+                    ["segs"] = detectedSegsOutput, // This now comes from our new dynamic logic
                     ["model"] = modelInput,
                     ["clip"] = clipInput,
                     ["vae"] = vaeInput,
